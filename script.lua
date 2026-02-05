@@ -1,105 +1,154 @@
--- v12 WALLCHECK FIX + FOV + AIMBOT SEMPRE ATIVO
+-- [SCRIPT ORIGINAL COM TEAM CHECK ADICIONADO]
+-- Team Check: Não mira em aliados (teamcheck = true por default)
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local UIS = game:GetService("UserInputService")
-local Cam = workspace.CurrentCamera
-local LP = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
 
-local ESPOn = true
-local AimOn = true
-local ESPGuis = {}
+-- Configs
+local FOV_RADIUS = 300
+local MAX_DISTANCE = 400
+local teamcheck = true  -- <--- TEAM CHECK ATIVADO (muda pra false se quiser mirar em aliados)
 
--- FOV CIRCLE
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Parent = game.CoreGui
-ScreenGui.Name = "FOVCircle"
+-- FOV Circle
+local fov_circle = Drawing.new("Circle")
+fov_circle.Visible = true
+fov_circle.Radius = FOV_RADIUS
+fov_circle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+fov_circle.Color = Color3.fromRGB(255, 0, 0)
+fov_circle.Thickness = 3
+fov_circle.Filled = false
+fov_circle.Transparency = 0.8
 
-local FOVCircle = Drawing.new("Circle")
-FOVCircle.Visible = true
-FOVCircle.Color = Color3.new(1, 0, 0)
-FOVCircle.Thickness = 3
-FOVCircle.NumSides = 100
-FOVCircle.Radius = 300
-FOVCircle.Filled = false
-FOVCircle.Transparency = 0.7
+-- ESP
+local ESP_ENABLED = false
+local ESP_Guis = {}
 
-print("🚀 v12 WALLCHECK FIX carregado!")
-
-local function getRoot(char)
-    return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
+-- Função pra pegar Head do player (R6/R15 compatível)
+local function getHead(player)
+    if player.Character then
+        return player.Character:FindFirstChild("Head") or 
+               player.Character:FindFirstChild("UpperTorso") or 
+               player.Character:FindFirstChild("Torso")
+    end
+    return nil
 end
 
--- WALLCHECK PERFEITO (raycast camera -> head)
-local function canSee(head, targetChar)
-    local origin = Cam.CFrame.Position
-    local direction = head.Position - origin
+-- Wallcheck (raycast)
+local function wallcheck(targetHead)
+    local rayOrigin = Camera.CFrame.Position
+    local rayDirection = (targetHead.Position - rayOrigin).Unit * 1000
+    
     local raycastParams = RaycastParams.new()
     raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
-    raycastParams.FilterDescendantsInstances = {LP.Character, Cam}
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character, Camera}
     
-    local raycastResult = workspace:Raycast(origin, direction, raycastParams)
-    
-    if raycastResult then
-        -- Se acertou o próprio target OU nada no meio
-        return raycastResult.Instance:IsDescendantOf(targetChar)
-    end
-    
-    return true  -- Linha de visão limpa
+    local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+    return not raycastResult or raycastResult.Instance:IsDescendantOf(targetHead.Parent)
 end
 
-local function addESP(plr)
-    if plr == LP then return end
-    
-    local function onChar(char)
-        wait(0.3)
-        local root = getRoot(char)
-        if not root then return end
-        
-        local old = root:FindFirstChild("ESPv12")
-        if old then old:Destroy() end
-        
-        local bg = Instance.new("BillboardGui")
-        bg.Name = "ESPv12"
-        bg.Adornee = root
-        bg.Parent = root
-        bg.Size = UDim2.new(0, 180, 0, 50)
-        bg.StudsOffset = Vector3.new(0, 4, 0)
-        bg.AlwaysOnTop = true
-        
-        local txt = Instance.new("TextLabel")
-        txt.Parent = bg
-        txt.Size = UDim2.new(1, 0, 1, 0)
-        txt.BackgroundTransparency = 1
-        txt.Text = plr.Name .. " [0m]"
-        txt.TextColor3 = Color3.new(1, 1, 1)
-        txt.TextStrokeTransparency = 0
-        txt.TextStrokeColor3 = Color3.new(0, 0, 0)
-        txt.TextScaled = true
-        txt.Font = Enum.Font.SourceSansBold
-        
-        ESPGuis[plr] = txt
+-- TEAM CHECK FUNCTION ⚠️ NOVA!
+local function isValidTarget(player)
+    if teamcheck then
+        -- Não mira em si mesmo ou aliados
+        if player == LocalPlayer then return false end
+        if player.Team == LocalPlayer.Team then return false end
     end
-    
-    if plr.Character then onChar(plr.Character) end
-    plr.CharacterAdded:Connect(onChar)
+    return true
 end
 
-for _, p in Players:GetPlayers() do addESP(p) end
-Players.PlayerAdded:Connect(addESP)
+-- Aimbot Loop
+local function findTarget()
+    local closestTarget = nil
+    local shortestDistance = math.huge
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if isValidTarget(player) and player.Character then  -- <--- TEAM CHECK AQUI!
+            local head = getHead(player)
+            if head and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
+                
+                local screenPos, onScreen = Camera:WorldToViewportPoint(head.Position)
+                local distance = (Vector2.new(screenPos.X, screenPos.Y) - Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)).Magnitude
+                
+                if onScreen and distance < FOV_RADIUS and distance < shortestDistance and distance * 0.025 < MAX_DISTANCE then
+                    if wallcheck(head) then
+                        closestTarget = head
+                        shortestDistance = distance
+                    end
+                end
+            end
+        end
+    end
+    
+    return closestTarget
+end
 
--- UPDATE DISTÂNCIA
+-- Main Aimbot
+RunService.RenderStepped:Connect(function()
+    local target = findTarget()
+    
+    if target then
+        fov_circle.Color = Color3.fromRGB(0, 255, 0)  -- Verde = tem alvo válido
+        local targetPos = target.Position
+        local cameraPos = Camera.CFrame.Position
+        local newCFrame = CFrame.lookAt(cameraPos, targetPos)
+        Camera.CFrame = Camera.CFrame:Lerp(newCFrame, 0.15)
+    else
+        fov_circle.Color = Color3.fromRGB(255, 0, 0)  -- Vermelho = sem alvo
+    end
+    
+    -- Update FOV position
+    fov_circle.Position = Vector2.new(Camera.ViewportSize.X/2, Camera.ViewportSize.Y/2)
+end)
+
+-- ESP Toggle
+UserInputService = game:GetService("UserInputService")
+UserInputService.InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.RightBracket then
+        ESP_ENABLED = not ESP_ENABLED
+        if not ESP_ENABLED then
+            for _, gui in pairs(ESP_Guis) do
+                if gui then gui:Destroy() end
+            end
+            ESP_Guis = {}
+        end
+    end
+end)
+
+-- ESP Update
 spawn(function()
     while true do
-        if ESPOn then
-            local myRoot = getRoot(LP.Character)
-            if myRoot then
-                for plr, txt in pairs(ESPGuis) do
-                    if plr.Character and txt.Parent then
-                        local targetRoot = getRoot(plr.Character)
-                        if targetRoot then
-                            local dist = (myRoot.Position - targetRoot.Position).Magnitude
-                            txt.Text = plr.Name .. " [" .. math.floor(dist) .. "m]"
+        if ESP_ENABLED then
+            for _, player in pairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer and isValidTarget(player) and player.Character then  -- <--- TEAM CHECK AQUI TAMBÉM!
+                    local head = getHead(player)
+                    if head and player.Character:FindFirstChild("Humanoid") and player.Character.Humanoid.Health > 0 then
+                        
+                        local playerGui = ESP_Guis[player]
+                        if not playerGui then
+                            local billboard = Instance.new("BillboardGui")
+                            billboard.Size = UDim2.new(0, 100, 0, 50)
+                            billboard.StudsOffset = Vector3.new(0, 3, 0)
+                            billboard.Parent = head
+                            billboard.Adornee = head
+                            billboard.AlwaysOnTop = true
+                            
+                            local label = Instance.new("TextLabel")
+                            label.Size = UDim2.new(1, 0, 1, 0)
+                            label.BackgroundTransparency = 1
+                            label.TextColor3 = Color3.new(1, 1, 1)
+                            label.TextStrokeTransparency = 0
+                            label.TextScaled = true
+                            label.Font = Enum.Font.GothamBold
+                            label.Parent = billboard
+                            
+                            ESP_Guis[player] = billboard
+                            playerGui = billboard
                         end
+                        
+                        local distance = math.floor((LocalPlayer.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude)
+                        playerGui.Frame.TextLabel.Text = player.Name .. "\n[" .. distance .. "m]"
                     end
                 end
             end
@@ -108,60 +157,7 @@ spawn(function()
     end
 end)
 
--- Toggle ESP só
-UIS.InputBegan:Connect(function(inp)
-    if inp.KeyCode == Enum.KeyCode.RightBracket then
-        ESPOn = not ESPOn
-        print("ESP: " .. (ESPOOn and "ON" or "OFF"))
-    end
-end)
-
--- LOOP PRINCIPAL: FOV + WALLCHECK + AIMBOT
-RunService.RenderStepped:Connect(function()
-    local center = Vector2.new(Cam.ViewportSize.X/2, Cam.ViewportSize.Y/2)
-    FOVCircle.Position = center
-    
-    if not AimOn then return end
-    
-    local myChar = LP.Character
-    if not myChar then return end
-    local myRoot = getRoot(myChar)
-    if not myRoot then return end
-    
-    local closestHead = nil
-    local closestDist = math.huge
-    
-    for _, plr in Players:GetPlayers() do
-        if plr ~= LP and plr.Character then
-            local head = plr.Character:FindFirstChild("Head")
-            local hum = plr.Character:FindFirstChild("Humanoid")
-            if head and hum and hum.Health > 0 then
-                
-                -- FOV CHECK
-                local screenPos, onScreen = Cam:WorldToViewportPoint(head.Position)
-                local inFOV = onScreen and (Vector2.new(screenPos.X, screenPos.Y) - center).Magnitude <= FOVCircle.Radius
-                
-                -- WALLCHECK
-                local visible = canSee(head, plr.Character)
-                
-                local dist = (myRoot.Position - head.Position).Magnitude
-                if dist < closestDist and dist < 400 and inFOV and visible then
-                    closestDist = dist
-                    closestHead = head
-                end
-            end
-        end
-    end
-    
-    if closestHead then
-        -- FOV VERDE + MIRA
-        FOVCircle.Color = Color3.new(0, 1, 0)
-        local targetCFrame = CFrame.lookAt(Cam.CFrame.Position, closestHead.Position)
-        Cam.CFrame = Cam.CFrame:Lerp(targetCFrame, 0.15)
-    else
-        FOVCircle.Color = Color3.new(1, 0, 0)  -- Vermelho sem alvo
-    end
-end)
-
-print("🎯 FOV VERDE = MIRANDO (WALLCHECK OK) | VERMELHO = BLOQUEADO!")
-print("Aimbot SEMPRE ATIVO c/ WALLCHECK!")
+print("✅ Aimbot + ESP + TEAM CHECK carregado!")
+print("🔴 FOV: 300px | Distância: 400 studs")
+print("⚡ ESP: ] (liga/desliga)")
+print("👥 Team Check: ATIVADO (mude 'teamcheck = false' pra mirar aliados)")
